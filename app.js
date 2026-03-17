@@ -47,6 +47,9 @@ class WashFlowApp {
         this.editMachId = null;
         this.editMachType = null;
 
+        // State persistence markers
+        this.lastProcessedTime = 0;
+
         this.initDOM();
         this.startGlobalClock();
         
@@ -105,7 +108,7 @@ class WashFlowApp {
             delete safeDryers[i].interval;
         }
 
-        return {
+        const state = {
             queue: this.queue,
             orders: this.orders,
             jobCounter: this.jobCounter,
@@ -114,6 +117,10 @@ class WashFlowApp {
             dryers: safeDryers,
             saveTime: Date.now()
         };
+        
+        // Update local marker immediately
+        this.lastProcessedTime = state.saveTime;
+        return state;
     }
 
     loadStateLocal() {
@@ -139,6 +146,16 @@ class WashFlowApp {
     }
 
     applyState(state) {
+        if (!state) return;
+        
+        // CRITICAL FIX: Skip if the incoming state is older than what we already processed.
+        // This prevents reloads or slow cloud updates from overwriting fresh local edits.
+        if (state.saveTime && state.saveTime < this.lastProcessedTime) {
+            console.log('⏳ Ignorando estado antiguo (Nube < Local):', state.saveTime, '<', this.lastProcessedTime);
+            return;
+        }
+        this.lastProcessedTime = state.saveTime || Date.now();
+
         try {
             // First clear all existing intervals to avoid double-ticks when external updates arrive
             for(let i=1; i<=3; i++) {
