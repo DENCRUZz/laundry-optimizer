@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WashFlow Pro - Multi-Máquina</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="background-effects">
+        <div class="glow-orb orb-1"></div>
+        <div class="glow-orb orb-2"></div>
+    </div>
+
+    <header class="app-header">
+        <div class="logo">
+            <i class="ph ph-waves"></i>
+            <h1>Wash<span>Flow</span> <em>Pro</em></h1>
+        </div>
+        <div class="header-stats" style="display:flex; align-items:center; gap:1rem;">
+            <span id="global-clock">00:00</span>
+            <button class="icon-btn" onclick="app.promptAdmin()" title="Administración / Analytics" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:1.2rem;"><i class="ph ph-lock-key"></i></button>
+        </div>
+    </header>
+
+    <main class="dashboard-layout" id="dashboard-view">
+        
+        <!-- Left Sidebar: Registration -->
+        <aside class="panel registration-panel">
+            <h2><i class="ph ph-user-plus"></i> Registrar Orden</h2>
+            <div class="form-container">
+                <div class="form-group">
+                    <label for="client-name">Nombre del Cliente / Orden</label>
+                    <input type="text" id="client-name" placeholder="Ej. Juan Pérez" autocomplete="off">
+                </div>
+
+                <div class="subloads-container">
+                    <div class="section-title">
+                        <span>Cargas del Cliente</span>
+                    </div>
+                    
+                    <div id="subloads-wrapper">
+                        <!-- Subload Form 1 -->
+                        <div class="subload-card" data-index="0">
+                            <div class="subload-header">
+                                <h4>Carga 1</h4>
+                            </div>
+                            <div class="form-group">
+                                <label>Tipo de Tela</label>
+                                <select class="fabric-type" onchange="app.estimateTimes(this)">
+                                    <option value="color">De Color</option>
+                                    <option value="blanca">Blanca</option>
+                                    <option value="oscura">Oscura</option>
+                                    <option value="delicada">Delicada</option>
+                                    <option value="pesada">Pesada</option>
+                                    <option value="edredones">Edredones/Cobijas</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Peso (lbs)</label>
+                                    <input type="number" class="weight-input" min="1" value="10" oninput="app.estimateTimes(this)">
+                                    <span style="font-size:0.65rem; color:var(--text-muted); display:block; margin-top:0.2rem;">Máx 25lb por máquina (Autodivisión a 20lb)</span>
+                                </div>
+                                <div class="form-group">
+                                    <label>Urgencia</label>
+                                    <select class="urgency-select">
+                                        <option value="1" selected>No urgente</option>
+                                        <option value="2">Urgente</option>
+                                        <option value="3">Para hoy</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="estimated-times">
+                                <div class="time-input-group">
+                                    <i class="ph ph-drop"></i>
+                                    <input type="number" class="est-wash" value="50"> min
+                                </div>
+                                <div class="time-input-group">
+                                    <i class="ph ph-wind"></i>
+                                    <input type="number" class="est-dry" value="45"> min
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button class="secondary-btn" id="add-subload-btn" title="Agregar otra carga"><i class="ph ph-plus"></i> Añadir otra carga</button>
+                </div>
+
+                <div id="eta-badge" class="eta-badge today"><i class="ph ph-clock"></i> Entrega: Calculando...</div>
+
+                <button id="submit-client-btn" class="primary-btn">
+                    <i class="ph ph-paper-plane-right"></i> Enviar a Cola
+                </button>
+            </div>
+        </aside>
+
+        <!-- Right Area: Kanban Boards -->
+        <section class="boards-area">
+            
+            <!-- Turno / En Cola -->
+            <div class="board-column queue-column">
+                <div class="board-header">
+                    <h3><i class="ph ph-list-dashes"></i> En Cola (Sugerido)</h3>
+                    <span class="badge" id="queue-count">0</span>
+                </div>
+                <div class="board-content" id="queue-list">
+                    <!-- Queue Items go here -->
+                </div>
+            </div>
+
+            <!-- Lavadoras -->
+            <div class="board-column washers-column">
+                <div class="board-header">
+                    <h3><i class="ph ph-washing-machine"></i> Lavadoras</h3>
+                    <span class="badge">3</span>
+                </div>
+                <div class="board-content machines-grid" id="washers-grid">
+                    <!-- Washer 1 -->
+                    <div class="machine-slot empty" id="washer-1" data-machine="1" data-type="washer">
+                        <div class="machine-label">LAV 1</div>
+                        <div class="machine-status">Libre</div>
+                    </div>
+                    <!-- Washer 2 -->
+                    <div class="machine-slot empty" id="washer-2" data-machine="2" data-type="washer">
+                        <div class="machine-label">LAV 2</div>
+                        <div class="machine-status">Libre</div>
+                    </div>
+                    <!-- Washer 3 -->
+                    <div class="machine-slot empty" id="washer-3" data-machine="3" data-type="washer">
+                        <div class="machine-label">LAV 3</div>
+                        <div class="machine-status">Libre</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Secadoras -->
+            <div class="board-column dryers-column">
+                <div class="board-header">
+                    <h3><i class="ph ph-wind"></i> Secadoras</h3>
+                    <span class="badge">3</span>
+                </div>
+                <div class="board-content machines-grid" id="dryers-grid">
+                    <!-- Dryer 1 -->
+                    <div class="machine-slot empty" id="dryer-1" data-machine="1" data-type="dryer">
+                        <div class="machine-label">SEC 1</div>
+                        <div class="machine-status">Libre</div>
+                    </div>
+                    <!-- Dryer 2 -->
+                    <div class="machine-slot empty" id="dryer-2" data-machine="2" data-type="dryer">
+                        <div class="machine-label">SEC 2</div>
+                        <div class="machine-status">Libre</div>
+                    </div>
+                    <!-- Dryer 3 -->
+                    <div class="machine-slot empty" id="dryer-3" data-machine="3" data-type="dryer">
+                        <div class="machine-label">SEC 3</div>
+                        <div class="machine-status">Libre</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Área de Doblado y Entrega -->
+            <div class="board-column folding-column">
+                <div class="board-header">
+                    <h3><i class="ph ph-package"></i> Zona de Doblado</h3>
+                    <span class="badge" id="folding-count">0</span>
+                </div>
+                <div class="board-content" id="folding-list">
+                    <!-- Folding Orders go here -->
+                </div>
+            </div>
+
+        </section>
+    </main>
+
+    <!-- Analytics Dashboard View (Hidden by Default) -->
+    <main class="analytics-layout" id="analytics-view" style="display:none; padding:1.5rem; flex-direction:column; height: calc(100vh - 85px); gap:1rem;">
+        <div class="panel" style="flex:1; padding:1.5rem; display:flex; flex-direction:column;">
+            <div class="section-title" style="margin-bottom:1.5rem; font-size:1.2rem;">
+                <span style="color:var(--primary)"><i class="ph ph-chart-line-up"></i> Historial de Desempeño (Tiempos Reales vs Estimados)</span>
+                <div style="display:flex; gap:0.5rem">
+                    <button class="secondary-btn btn-done" style="width:auto; padding:0.4rem 1rem; border-color:var(--accent-success); color:var(--accent-success);" onclick="app.exportToExcel()"><i class="ph ph-microsoft-excel-logo"></i> Exportar (.xls)</button>
+                    <button class="secondary-btn" style="width:auto; padding:0.4rem 1rem;" onclick="app.exitAdmin()"><i class="ph ph-sign-out"></i> Volver a Lavandería</button>
+                </div>
+            </div>
+            
+            <div style="flex:1; overflow-y:auto; background:rgba(0,0,0,0.2); border-radius:var(--radius-md); border:1px solid var(--surface-border);">
+                <table class="data-table" style="width:100%; text-align:left; border-collapse:collapse;">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--surface-border); background:rgba(255,255,255,0.05);">
+                            <th>Fecha/Hora</th>
+                            <th>Orden</th>
+                            <th>Carga</th>
+                            <th>Tela</th>
+                            <th>Peso</th>
+                            <th>Lavado (Est/Real)</th>
+                            <th>Secado (Est/Real)</th>
+                            <th>Diferencia Total</th>
+                            <th>Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="analytics-tbody">
+                        <!-- Data injected via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal for Assigning Machine -->
+    <div class="modal-overlay" id="assign-modal">
+        <div class="modal-content glass-panel">
+            <h3>Asignar a Máquina</h3>
+            <p id="assign-job-details">Cliente: Juan - Carga 1</p>
+            <div class="machine-options" id="assign-options">
+                <!-- Options injected by JS -->
+            </div>
+            <button class="cancel-btn" onclick="app.closeModal()" style="margin-top:1rem">Cancelar</button>
+        </div>
+    </div>
+
+    <!-- Edit Job Modal -->
+    <div class="modal-overlay" id="edit-job-modal" style="display:none; align-items:center; justify-content:center; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:999;">
+        <div class="modal-content glass-panel">
+            <h3><i class="ph ph-pencil-simple"></i> Editar Máquina</h3>
+            <div class="form-container" style="margin-top:1rem">
+                <div class="form-group">
+                    <label>Nombre Cliente / Orden</label>
+                    <input type="text" id="edit-client-name" autocomplete="off">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Minutos Restantes</label>
+                        <input type="number" id="edit-time-remaining" min="0">
+                    </div>
+                </div>
+            </div>
+            <div class="job-actions" style="margin-top:1.5rem; display:flex; gap:1rem;">
+                <button class="secondary-btn cancel-btn" onclick="app.closeEditModal()">Cancelar</button>
+                <button class="primary-btn" onclick="app.saveJobEdits()">Guardar Cambios</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Password Modal -->
+    <div class="modal-overlay" id="admin-modal">
+        <div class="modal-content glass-panel">
+            <h3><i class="ph ph-lock-key"></i> Acceso Administrativo</h3>
+            <p>Ingrese la contraseña para ver la Analítica.</p>
+            <div class="form-container" style="margin-top:0.5rem">
+                <input type="password" id="admin-password" placeholder="PIN" style="text-align:center; font-size:1.5rem; letter-spacing:0.5rem;">
+            </div>
+            <div class="job-actions" style="margin-top:1.5rem; display:flex; gap:1rem;">
+                <button class="secondary-btn cancel-btn" onclick="app.closeAdminModal()">Cancelar</button>
+                <button class="primary-btn" onclick="app.verifyAdmin()">Ingresar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Supabase JS CDN (Sincrónico) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- App Logic -->
+    <script src="app.js"></script>
+</body>
+</html>
