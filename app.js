@@ -13,6 +13,7 @@ class WashFlowApp {
         this.orders = {}; // Stores { ORD-1234: { id, client, totalSubloads, finishedSubloads } }
         this.jobCounter = 1;
         this.subloadCounter = 1;
+        this.customers = []; // Cache of customer names for autocomplete
 
         // Machine State (1 = Washer 1, 2 = Washer 2... etc)
         // job: null means free. Otherwise holds job object.
@@ -56,6 +57,7 @@ class WashFlowApp {
         // Start from memory while Cloud loads, then fetch Cloud
         this.loadStateLocal();
         this.initCloudSync();
+        this.initCustomers(); // Fetch customers
     }
 
     // --- CLOUD & STATE PERSISTENCE ---
@@ -302,12 +304,100 @@ class WashFlowApp {
         this.calculateOrderETA();
     }
 
+    // --- CUSTOMER AUTOCOMPLETE ---
+
+    async initCustomers() {
+        try {
+            // First time using this? Supabase table 'customers' must exist with column 'full_name'
+            const { data, error } = await this.supabase
+                .from('customers')
+                .select('full_name')
+                .order('full_name', { ascending: true });
+            
+            if (error) {
+                console.warn('⚠️ No se pudieron cargar los clientes. Asegúrate de tener la tabla "customers" en Supabase.');
+                console.error(error);
+                return;
+            }
+
+            this.customers = data ? data.map(c => c.full_name) : [];
+            this.updateCustomerDatalist();
+        } catch (e) {
+            console.error('Error fetching customers:', e);
+        }
+    }
+
+    updateCustomerDatalist() {
+        const datalist = document.getElementById('customer-list');
+        if (!datalist) return;
+        
+        datalist.innerHTML = this.customers
+            .map(name => `<option value="${name}">`)
+            .join('');
+    }
+
+    async checkAndAddCustomer(name) {
+        if (!name) return;
+        
+        // Búsqueda insensible a mayúsculas
+        const exists = this.customers.some(c => c.toLowerCase() === name.trim().toLowerCase());
+        
+        if (!exists) {
+            console.log(`🆕 Nuevo cliente detectado: ${name}. Guardando...`);
+            try {
+                const { error } = await this.supabase
+                    .from('customers')
+                    .insert([{ full_name: name.trim() }]);
+                
+                if (!error) {
+                    this.customers.push(name.trim());
+                    this.customers.sort();
+                    this.updateCustomerDatalist();
+                    console.log('✅ Cliente guardado con éxito.');
+                } else {
+                    console.error('Error insertando cliente:', error);
+                }
+            } catch (e) {
+                console.error('Error saving new customer:', e);
+            }
+        }
+    }
+
+    /**
+     * Utility to import customers from a JSON or Array
+     * Can be called from Console: app.importCustomers(['Juan Perez', 'Maria Garcia'])
+     */
+    async importCustomers(customerList) {
+        console.log(`🚀 Iniciando importación de ${customerList.length} clientes...`);
+        const formatted = customerList.map(name => ({ full_name: name.trim() }));
+        
+        try {
+            const { error } = await this.supabase
+                .from('customers')
+                .insert(formatted);
+            
+            if (error) {
+                console.error('❌ Error en importación masiva:', error);
+                alert('Error al importar. Ver consola.');
+            } else {
+                console.log('✅ Importación completada.');
+                alert(`Se han importado ${customerList.length} clientes.`);
+                this.initCustomers(); // Refresh list
+            }
+        } catch (e) {
+            console.error('Excepción en importación:', e);
+        }
+    }
+
     processClientForm() {
         const clientName = document.getElementById('client-name').value.trim();
         if (!clientName) {
             alert('Ingrese el nombre de la orden o cliente');
             return;
         }
+
+        // Auto-add customer to DB if they don't exist
+        this.checkAndAddCustomer(clientName);
 
         const cards = document.querySelectorAll('.subload-card');
         if (cards.length === 0) return;
@@ -1023,6 +1113,27 @@ class WashFlowApp {
             document.body.removeChild(link);
 
         } catch(err) { console.error(err); alert("Falló la exportación.")}
+    }
+    toggleCustomerManager() {
+        const panel = document.getElementById('customer-manager');
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    }
+
+    async processBulkImport() {
+        const raw = document.getElementById('import-names-area').value.trim();
+        if (!raw) return;
+
+        // Split by new line OR comma
+        let names = raw.split(/[\n,]+/).map(n => n.trim()).filter(n => n.length > 0);
+        
+        // Final cleaning: only unique names
+        names = [...new Set(names)];
+
+        if (confirm(`¿Importar ${names.length} clientes únicos?`)) {
+            await this.importCustomers(names);
+            document.getElementById('import-names-area').value = '';
+            this.toggleCustomerManager();
+        }
     }
 }
 

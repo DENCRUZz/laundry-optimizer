@@ -37,7 +37,8 @@
             <div class="form-container">
                 <div class="form-group">
                     <label for="client-name">Nombre del Cliente / Orden</label>
-                    <input type="text" id="client-name" placeholder="Ej. Juan Pérez" autocomplete="off">
+                    <input type="text" id="client-name" placeholder="Ej. Juan Pérez" autocomplete="off" list="customer-list">
+                    <datalist id="customer-list"></datalist>
                 </div>
 
                 <div class="subloads-container">
@@ -185,8 +186,20 @@
             <div class="section-title" style="margin-bottom:1.5rem; font-size:1.2rem;">
                 <span style="color:var(--primary)"><i class="ph ph-chart-line-up"></i> Historial de Desempeño (Tiempos Reales vs Estimados)</span>
                 <div style="display:flex; gap:0.5rem">
+                    <button class="secondary-btn" style="width:auto; padding:0.4rem 1rem;" onclick="app.toggleCustomerManager()"><i class="ph ph-users"></i> Gestionar Clientes</button>
                     <button class="secondary-btn btn-done" style="width:auto; padding:0.4rem 1rem; border-color:var(--accent-success); color:var(--accent-success);" onclick="app.exportToExcel()"><i class="ph ph-microsoft-excel-logo"></i> Exportar (.xls)</button>
                     <button class="secondary-btn" style="width:auto; padding:0.4rem 1rem;" onclick="app.exitAdmin()"><i class="ph ph-sign-out"></i> Volver a Lavandería</button>
+                </div>
+            </div>
+
+            <!-- Customer Manager (Hidden by Default) -->
+            <div id="customer-manager" style="display:none; margin-bottom:1.5rem; padding:1rem; background:rgba(255,255,255,0.05); border-radius:var(--radius-md); border:1px solid var(--surface-border);">
+                <h4 style="margin-bottom:0.5rem; display:flex; align-items:center; gap:0.5rem;"><i class="ph ph-user-list"></i> Importar Lista de Clientes</h4>
+                <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">Pega aquí los nombres de tus clientes (uno por línea o separados por comas).</p>
+                <textarea id="import-names-area" placeholder="Ej: Juan Perez, Maria Garcia, Pedro Lopez..." style="width:100%; height:80px; background:rgba(0,0,0,0.3); border:1px solid var(--surface-border); border-radius:var(--radius-sm); color:white; padding:0.5rem; font-family:inherit; margin-bottom:1rem;"></textarea>
+                <div style="display:flex; justify-content:flex-end; gap:0.5rem;">
+                    <button class="secondary-btn" onclick="app.toggleCustomerManager()">Cerrar</button>
+                    <button class="primary-btn" style="width:auto; padding:0.5rem 1.5rem;" onclick="app.processBulkImport()">Importar ahora</button>
                 </div>
             </div>
             
