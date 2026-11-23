@@ -524,13 +524,38 @@ class WashFlowApp {
                 }
             }
         } else if (source === 'washer') {
+            // To other washers (same machine excluded)
+            for (let i = 1; i <= 3; i++) {
+                if (i !== machineId && !this.washers[i].job && !this.washers[i].outOfService) {
+                    document.getElementById(`washer-${i}`)?.classList.add('valid-drop-target');
+                }
+            }
+            // To dryers
             for (let i = 1; i <= 3; i++) {
                 if (!this.dryers[i].job && !this.dryers[i].outOfService) {
                     document.getElementById(`dryer-${i}`)?.classList.add('valid-drop-target');
                 }
             }
+            // Back to queue
+            document.getElementById('queue-list')?.classList.add('valid-drop-target');
+            // To folding
             document.getElementById('folding-list')?.classList.add('valid-drop-target');
         } else if (source === 'dryer') {
+            // To other dryers (same machine excluded)
+            for (let i = 1; i <= 3; i++) {
+                if (i !== machineId && !this.dryers[i].job && !this.dryers[i].outOfService) {
+                    document.getElementById(`dryer-${i}`)?.classList.add('valid-drop-target');
+                }
+            }
+            // To washers
+            for (let i = 1; i <= 3; i++) {
+                if (!this.washers[i].job && !this.washers[i].outOfService) {
+                    document.getElementById(`washer-${i}`)?.classList.add('valid-drop-target');
+                }
+            }
+            // Back to queue
+            document.getElementById('queue-list')?.classList.add('valid-drop-target');
+            // To folding
             document.getElementById('folding-list')?.classList.add('valid-drop-target');
         }
     }
@@ -544,15 +569,29 @@ class WashFlowApp {
 
     handleDragOver(e, targetType, machineId = null) {
         if (!this.dragData) return;
-        const { source } = this.dragData;
+        const { source, machineId: sourceMachId } = this.dragData;
 
         let isValid = false;
         if (targetType === 'washer' && machineId) {
-            isValid = source === 'queue' && !this.washers[machineId].job && !this.washers[machineId].outOfService;
+            const destFree = !this.washers[machineId].job && !this.washers[machineId].outOfService;
+            if (source === 'queue') {
+                isValid = destFree;
+            } else if (source === 'washer') {
+                isValid = machineId !== sourceMachId && destFree;
+            } else if (source === 'dryer') {
+                isValid = destFree;
+            }
         } else if (targetType === 'dryer' && machineId) {
-            isValid = (source === 'queue' || source === 'washer') && !this.dryers[machineId].job && !this.dryers[machineId].outOfService;
+            const destFree = !this.dryers[machineId].job && !this.dryers[machineId].outOfService;
+            if (source === 'queue' || source === 'washer') {
+                isValid = destFree;
+            } else if (source === 'dryer') {
+                isValid = machineId !== sourceMachId && destFree;
+            }
         } else if (targetType === 'folding') {
             isValid = source === 'dryer' || source === 'washer';
+        } else if (targetType === 'queue') {
+            isValid = source === 'washer' || source === 'dryer';
         }
 
         if (isValid) {
@@ -602,6 +641,14 @@ class WashFlowApp {
         // Dryer -> Folding (finish drying)
         else if (source === 'dryer' && targetType === 'folding') {
             this.finishJob(sourceMachId);
+        }
+        // Washer -> Queue (regresar a cola)
+        else if (source === 'washer' && targetType === 'queue') {
+            this.returnJobToQueue('washer', sourceMachId);
+        }
+        // Dryer -> Queue (regresar a cola)
+        else if (source === 'dryer' && targetType === 'queue') {
+            this.returnJobToQueue('dryer', sourceMachId);
         }
 
         this.dragData = null;
@@ -668,6 +715,60 @@ class WashFlowApp {
             }
         }, 60000);
 
+        this.renderMachines();
+        this.saveState();
+    }
+
+    // Move a job between machines of the same or different type (only if destination is free)
+    moveJobBetweenMachines(sourceType, sourceId, targetType, targetId) {
+        const sourceDict = sourceType === 'washer' ? this.washers : this.dryers;
+        const targetDict = targetType === 'washer' ? this.washers : this.dryers;
+
+        const sourceMach = sourceDict[sourceId];
+        const targetMach = targetDict[targetId];
+
+        if (!sourceMach || !sourceMach.job || !targetMach || targetMach.job || targetMach.outOfService) return;
+
+        const job = sourceMach.job;
+        clearInterval(sourceMach.interval);
+        sourceMach.job = null;
+        sourceMach.interval = null;
+
+        targetMach.job = job;
+        targetMach.job.isPaused = false;
+        targetMach.timeRemaining = sourceMach.timeRemaining > 0
+            ? sourceMach.timeRemaining
+            : (targetType === 'washer' ? job.washTime : job.dryTime);
+
+        targetMach.interval = setInterval(() => {
+            if (!targetMach.job.isPaused && targetMach.timeRemaining > 0) {
+                targetMach.timeRemaining--;
+                this.renderMachines();
+                this.saveState();
+            }
+        }, 60000);
+
+        this.renderMachines();
+        this.saveState();
+    }
+
+    // Return a job from a machine back to the queue (without losing it)
+    returnJobToQueue(type, id) {
+        const dict = type === 'washer' ? this.washers : this.dryers;
+        const mach = dict[id];
+
+        if (!mach || !mach.job) return;
+
+        clearInterval(mach.interval);
+        const job = mach.job;
+        mach.job = null;
+        mach.interval = null;
+
+        job.state = 'queue';
+        job.isPaused = false;
+        this.queue.push(job);
+
+        this.updateQueueBoard();
         this.renderMachines();
         this.saveState();
     }
