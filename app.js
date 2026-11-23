@@ -769,12 +769,12 @@ class WashFlowApp {
                 el.removeAttribute('ondragover');
                 el.removeAttribute('ondrop');
                 el.innerHTML = `
-                    <div class="machine-slot-header">
+                    <div class="machine-slot-top">
                         <span class="machine-tag" style="color:var(--state-red)">LAV ${i}</span>
                         <span class="machine-badge badge-danger">FUERA DE SERVICIO</span>
                     </div>
                     <div class="machine-empty-body">
-                        <i class="ph ph-warning" style="font-size:1.6rem; color:var(--state-red);"></i>
+                        <i class="ph ph-warning" style="font-size:1.15rem; color:var(--state-red);"></i>
                         <span class="empty-text" style="color:var(--state-red); font-weight:700;">En Mantenimiento</span>
                     </div>
                     <div class="machine-empty-footer" style="justify-content:center;">
@@ -791,7 +791,7 @@ class WashFlowApp {
                 el.setAttribute('ondragleave', `app.handleDragLeave(event)`);
                 el.setAttribute('ondrop', `app.handleDrop(event, 'washer', ${i})`);
                 el.innerHTML = `
-                    <div class="machine-slot-header">
+                    <div class="machine-slot-top">
                         <span class="machine-tag">LAV ${i}</span>
                         <span class="machine-badge badge-free">LIBRE</span>
                     </div>
@@ -833,12 +833,12 @@ class WashFlowApp {
                 el.removeAttribute('ondragover');
                 el.removeAttribute('ondrop');
                 el.innerHTML = `
-                    <div class="machine-slot-header">
+                    <div class="machine-slot-top">
                         <span class="machine-tag" style="color:var(--state-red)">SEC ${i}</span>
                         <span class="machine-badge badge-danger">FUERA DE SERVICIO</span>
                     </div>
                     <div class="machine-empty-body">
-                        <i class="ph ph-warning" style="font-size:1.6rem; color:var(--state-red);"></i>
+                        <i class="ph ph-warning" style="font-size:1.15rem; color:var(--state-red);"></i>
                         <span class="empty-text" style="color:var(--state-red); font-weight:700;">En Mantenimiento</span>
                     </div>
                     <div class="machine-empty-footer" style="justify-content:center;">
@@ -855,7 +855,7 @@ class WashFlowApp {
                 el.setAttribute('ondragleave', `app.handleDragLeave(event)`);
                 el.setAttribute('ondrop', `app.handleDrop(event, 'dryer', ${i})`);
                 el.innerHTML = `
-                    <div class="machine-slot-header">
+                    <div class="machine-slot-top">
                         <span class="machine-tag">SEC ${i}</span>
                         <span class="machine-badge badge-free">LIBRE</span>
                     </div>
@@ -889,12 +889,12 @@ class WashFlowApp {
             statusBadgeClass = 'badge-paused';
             timerStatusClass = 'timer-attention';
         } else if (isFinished) {
-            statusBadgeText = '¡TERMINADO!';
+            statusBadgeText = '¡LISTO!';
             statusBadgeClass = 'badge-finished';
             timerStatusClass = 'timer-finished';
         } else if (isUrgent) {
             statusBadgeText = mType === 'washer' ? 'LAVANDO' : 'SECANDO';
-            statusBadgeClass = 'badge-running';
+            statusBadgeClass = 'badge-attention';
             timerStatusClass = 'timer-attention';
         } else {
             statusBadgeText = mType === 'washer' ? 'LAVANDO' : 'SECANDO';
@@ -902,45 +902,45 @@ class WashFlowApp {
             timerStatusClass = '';
         }
 
-        const timeStr = job.isPaused ? 'PAUSA' : (isFinished ? '¡LISTO!' : `${minsLeft} min`);
-        const timerSubtext = isFinished ? 'Listo para retirar' : (job.isPaused ? 'En espera' : 'Tiempo restante');
+        const timeStr = job.isPaused ? 'PAUSA' : (isFinished ? '¡LISTO!' : `${minsLeft}m`);
 
         let primaryBtn = '';
         if(nextTarget === 'dryer') {
             const btnClass = isFinished ? 'btn-finished-action' : (isUrgent ? 'btn-attention-action' : 'btn-primary-action');
-            primaryBtn = `<button class="action-btn ${btnClass}" onclick="app.openAssignModal(${job.id}, 'dryer', ${machineNum}, 'washer')" title="Pasar a Secadora (o arrastra la tarjeta a una secadora libre)"><i class="ph ph-wind"></i> A Secadora</button>`;
+            primaryBtn = `<button class="action-btn ${btnClass}" onclick="app.openAssignModal(${job.id}, 'dryer', ${machineNum}, 'washer')" title="A Secadora"><i class="ph ph-wind"></i> A Secadora</button>`;
         } else {
             const btnClass = isFinished ? 'btn-finished-action' : 'btn-primary-action';
-            primaryBtn = `<button class="action-btn ${btnClass}" onclick="app.finishJob(${machineNum})" title="Terminar y Pasar a Doblado (o arrastra a la zona de doblado)"><i class="ph ph-check-circle"></i> Terminar</button>`;
+            primaryBtn = `<button class="action-btn ${btnClass}" onclick="app.finishJob(${machineNum})" title="Terminar"><i class="ph ph-check-circle"></i> Terminar</button>`;
         }
 
         let pauseBtn = job.isPaused
             ? `<button class="action-btn btn-icon-action" style="color:var(--state-yellow);" onclick="app.togglePause('${mType}', ${machineNum})" title="Reanudar"><i class="ph ph-play"></i></button>`
             : `<button class="action-btn btn-icon-action" onclick="app.togglePause('${mType}', ${machineNum})" title="Pausar"><i class="ph ph-pause"></i></button>`;
 
-        let editBtn = `<button class="action-btn btn-icon-action" onclick="app.openEditModal('${mType}', ${machineNum})" title="Editar tiempo o cliente"><i class="ph ph-pencil-simple"></i></button>`;
+        let editBtn = `<button class="action-btn btn-icon-action" onclick="app.openEditModal('${mType}', ${machineNum})" title="Editar"><i class="ph ph-pencil-simple"></i></button>`;
+
+        let priorityBadge = '';
+        if (job.priority === 3) priorityBadge = `<span class="mach-detail-pill pill-today">Para hoy</span>`;
+        else if (job.priority === 2) priorityBadge = `<span class="mach-detail-pill pill-urgent">Urgente</span>`;
 
         return `
-            <div class="machine-slot-header">
-                <span class="machine-tag">${label} ${machineNum}</span>
-                <span class="machine-badge ${statusBadgeClass}">${statusBadgeText}</span>
-            </div>
-
-            <div class="machine-slot-body">
-                <div class="mach-client-row">
+            <div class="machine-slot-top">
+                <div class="mach-identity">
+                    <span class="machine-tag">${label} ${machineNum}</span>
                     <span class="mach-client-name" title="${job.client}">${job.client}</span>
                     <span class="mach-order-id">[${job.orderId}]</span>
                 </div>
-                <div class="mach-details-row">
-                    <span class="mach-detail-pill"><i class="ph ph-stack"></i> Carga ${job.subloadIndex}</span>
-                    <span class="mach-detail-pill"><i class="ph ph-t-shirt"></i> ${job.fabric}</span>
-                    <span class="mach-detail-pill"><i class="ph ph-scales"></i> ${job.weight} lb</span>
+                <div class="mach-status-group">
+                    <span class="mach-timer-pill ${timerStatusClass}">${timeStr}</span>
+                    <span class="machine-badge ${statusBadgeClass}">${statusBadgeText}</span>
                 </div>
             </div>
 
-            <div class="machine-timer-row ${timerStatusClass}">
-                <div class="mach-timer-value">${timeStr}</div>
-                <div class="mach-timer-label">${timerSubtext}</div>
+            <div class="machine-slot-mid">
+                <span class="mach-detail-pill"><i class="ph ph-stack"></i> Carga ${job.subloadIndex}</span>
+                <span class="mach-detail-pill"><i class="ph ph-t-shirt"></i> ${job.fabric}</span>
+                <span class="mach-detail-pill"><i class="ph ph-scales"></i> ${job.weight} lb</span>
+                ${priorityBadge}
             </div>
 
             <div class="machine-actions-row">
