@@ -16,16 +16,15 @@ class WashFlowApp {
         this.customers = []; // Cache of customer names for autocomplete
 
         // Machine State (1 = Washer 1, 2 = Washer 2... etc)
-        // job: null means free. Otherwise holds job object.
         this.washers = {
-            1: { type: 'washer', id: 1, job: null, timeRemaining: 0, interval: null },
-            2: { type: 'washer', id: 2, job: null, timeRemaining: 0, interval: null },
-            3: { type: 'washer', id: 3, job: null, timeRemaining: 0, interval: null }
+            1: { type: 'washer', id: 1, job: null, timeRemaining: 0, interval: null, outOfService: false },
+            2: { type: 'washer', id: 2, job: null, timeRemaining: 0, interval: null, outOfService: false },
+            3: { type: 'washer', id: 3, job: null, timeRemaining: 0, interval: null, outOfService: false }
         };
         this.dryers = {
-            1: { type: 'dryer', id: 1, job: null, timeRemaining: 0, interval: null },
-            2: { type: 'dryer', id: 2, job: null, timeRemaining: 0, interval: null },
-            3: { type: 'dryer', id: 3, job: null, timeRemaining: 0, interval: null }
+            1: { type: 'dryer', id: 1, job: null, timeRemaining: 0, interval: null, outOfService: false },
+            2: { type: 'dryer', id: 2, job: null, timeRemaining: 0, interval: null, outOfService: false },
+            3: { type: 'dryer', id: 3, job: null, timeRemaining: 0, interval: null, outOfService: false }
         };
 
         // Time Dictionary Base (Wash, Dry) in minutes
@@ -48,6 +47,9 @@ class WashFlowApp {
         this.editMachId = null;
         this.editMachType = null;
 
+        // Drag & Drop State
+        this.dragData = null;
+
         // State persistence markers
         this.lastProcessedTime = 0;
 
@@ -66,7 +68,7 @@ class WashFlowApp {
         console.log('⚡ Iniciando sincronización de nube...');
         await this.loadFromCloud();
 
-        // Subscribe to real-time changes from other devices (like your phone)
+        // Subscribe to real-time changes from other devices
         this.supabase
             .channel('public:app_state')
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_state' }, payload => {
@@ -79,21 +81,14 @@ class WashFlowApp {
     }
 
     async saveState() {
-        console.log('💾 Intento de guardado en state...');
         const state = this.createStateObject();
-        // Save local fallback
         localStorage.setItem('washflow_state', JSON.stringify(state));
-        console.log('✅ LocalStorage guardado con éxito.');
 
         // Save to Supabase Cloud
         try {
-            console.log('⬆️ Subiendo JSON a Supabase...', state);
             const { error } = await this.supabase.from('app_state').upsert({ id: 1, state: state });
             if (error) {
                 console.error('❌ Error de Supabase al escribir data:', error);
-                alert("Error crítico conectando a la Nube Supabase. Revisa consola.");
-            } else {
-                console.log('✅ Supabase actualizado con éxito.');
             }
         } catch(e) { 
             console.error('❌ Cloud save falló con Excepción:', e); 
@@ -101,7 +96,6 @@ class WashFlowApp {
     }
 
     createStateObject() {
-        // Strip out the interval timers from machines before saving
         const safeWashers = JSON.parse(JSON.stringify(this.washers));
         const safeDryers = JSON.parse(JSON.stringify(this.dryers));
         
@@ -120,7 +114,6 @@ class WashFlowApp {
             saveTime: Date.now()
         };
         
-        // Update local marker immediately
         this.lastProcessedTime = state.saveTime;
         return state;
     }
@@ -130,7 +123,6 @@ class WashFlowApp {
         if(saved) {
             this.applyState(JSON.parse(saved));
         } else {
-            // Force first render even if no data
             this.updateQueueBoard();
             this.renderMachines();
             this.renderFoldingBoard();
@@ -150,8 +142,6 @@ class WashFlowApp {
     applyState(state) {
         if (!state) return;
         
-        // CRITICAL FIX: Skip if the incoming state is older than what we already processed.
-        // This prevents reloads or slow cloud updates from overwriting fresh local edits.
         if (state.saveTime && state.saveTime < this.lastProcessedTime) {
             console.log('⏳ Ignorando estado antiguo (Nube < Local):', state.saveTime, '<', this.lastProcessedTime);
             return;
@@ -159,7 +149,6 @@ class WashFlowApp {
         this.lastProcessedTime = state.saveTime || Date.now();
 
         try {
-            // First clear all existing intervals to avoid double-ticks when external updates arrive
             for(let i=1; i<=3; i++) {
                 if(this.washers[i] && this.washers[i].interval) clearInterval(this.washers[i].interval);
                 if(this.dryers[i] && this.dryers[i].interval) clearInterval(this.dryers[i].interval);
@@ -169,9 +158,6 @@ class WashFlowApp {
             this.orders = state.orders || {};
             this.jobCounter = state.jobCounter || 1;
             this.subloadCounter = state.subloadCounter || 1;
-            
-            // Calculate time elapsed since last save to deduct from timers
-            const elapsedMins = state.saveTime ? Math.floor((Date.now() - state.saveTime) / 60000) : 0;
 
             // Restore Washers
             if(state.washers) {
@@ -179,9 +165,7 @@ class WashFlowApp {
                     const w = state.washers[i];
                     this.washers[i] = w;
                     if(w.job) {
-                        // Deduct elapsed time only if NOT paused
                         w.timeRemaining = w.job.isPaused ? w.timeRemaining : Math.max(0, w.timeRemaining - Math.floor((Date.now() - state.saveTime) / 60000));
-                        // Restart interval
                         this.washers[i].interval = setInterval(() => {
                             if(!this.washers[i].job.isPaused && this.washers[i].timeRemaining > 0) {
                                 this.washers[i].timeRemaining--;
@@ -211,7 +195,6 @@ class WashFlowApp {
                 }
             }
 
-            // Re-render UI
             this.updateQueueBoard();
             this.renderMachines();
             this.renderFoldingBoard();
@@ -222,8 +205,35 @@ class WashFlowApp {
     }
 
     initDOM() {
-        document.getElementById('add-subload-btn').addEventListener('click', () => this.addSubloadForm());
-        document.getElementById('submit-client-btn').addEventListener('click', () => this.processClientForm());
+        document.getElementById('add-subload-btn')?.addEventListener('click', () => this.addSubloadForm());
+        document.getElementById('submit-client-btn')?.addEventListener('click', () => this.processClientForm());
+
+        // Setup drop listener on folding container
+        const foldingList = document.getElementById('folding-list');
+        if (foldingList) {
+            foldingList.addEventListener('dragover', (e) => this.handleDragOver(e, 'folding'));
+            foldingList.addEventListener('dragleave', (e) => this.handleDragLeave(e));
+            foldingList.addEventListener('drop', (e) => this.handleDrop(e, 'folding'));
+        }
+
+        // Close modals on Escape key
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.closeRegisterModal();
+                this.closeModal();
+                this.closeEditModal();
+                this.closeAdminModal();
+            }
+        });
+
+        // Close modal on click backdrop
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    overlay.classList.remove('active');
+                }
+            });
+        });
     }
 
     startGlobalClock() {
@@ -232,6 +242,24 @@ class WashFlowApp {
             const now = new Date();
             clockEl.textContent = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
         }, 1000);
+    }
+
+    // --- REGISTER MODAL ---
+
+    openRegisterModal() {
+        const modal = document.getElementById('register-order-modal');
+        if (modal) {
+            modal.classList.add('active');
+            document.getElementById('client-name')?.focus();
+            this.calculateOrderETA();
+        }
+    }
+
+    closeRegisterModal() {
+        const modal = document.getElementById('register-order-modal');
+        if (modal) {
+            modal.classList.remove('active');
+        }
     }
 
     // --- FORM LOGIC ---
@@ -262,7 +290,7 @@ class WashFlowApp {
                     <div class="form-group">
                         <label>Peso (lbs)</label>
                         <input type="number" class="weight-input" min="1" value="10" oninput="app.estimateTimes(this)">
-                        <span style="font-size:0.65rem; color:var(--text-muted); display:block; margin-top:0.2rem;">Máx 25lb por máquina (Autodivisión a 20lb)</span>
+                        <span class="help-text">Máx 25lb por máquina (Autodivisión a 20lb)</span>
                     </div>
                     <div class="form-group">
                         <label>Urgencia</label>
@@ -276,11 +304,11 @@ class WashFlowApp {
                 <div class="estimated-times">
                     <div class="time-input-group">
                         <i class="ph ph-drop"></i>
-                        <input type="number" class="est-wash" value="50"> min
+                        <input type="number" class="est-wash" value="50"> min lavado
                     </div>
                     <div class="time-input-group">
                         <i class="ph ph-wind"></i>
-                        <input type="number" class="est-dry" value="45"> min
+                        <input type="number" class="est-dry" value="45"> min secado
                     </div>
                 </div>
             </div>
@@ -294,8 +322,6 @@ class WashFlowApp {
         const weight = parseInt(card.querySelector('.weight-input').value) || 0;
         
         const base = this.timeDb[fabric];
-        
-        // Slight modifier: +5 mins per 10 over 20lbs (just as logic example)
         const weightMod = weight > 20 ? Math.floor((weight - 20) / 10) * 5 : 0;
 
         card.querySelector('.est-wash').value = base.w + weightMod;
@@ -308,15 +334,13 @@ class WashFlowApp {
 
     async initCustomers() {
         try {
-            // First time using this? Supabase table 'customers' must exist with column 'full_name'
             const { data, error } = await this.supabase
                 .from('customers')
                 .select('full_name')
                 .order('full_name', { ascending: true });
             
             if (error) {
-                console.warn('⚠️ No se pudieron cargar los clientes. Asegúrate de tener la tabla "customers" en Supabase.');
-                console.error(error);
+                console.warn('⚠️ No se pudieron cargar los clientes de Supabase.');
                 return;
             }
 
@@ -338,12 +362,9 @@ class WashFlowApp {
 
     async checkAndAddCustomer(name) {
         if (!name) return;
-        
-        // Búsqueda insensible a mayúsculas
         const exists = this.customers.some(c => c.toLowerCase() === name.trim().toLowerCase());
         
         if (!exists) {
-            console.log(`🆕 Nuevo cliente detectado: ${name}. Guardando...`);
             try {
                 const { error } = await this.supabase
                     .from('customers')
@@ -353,9 +374,6 @@ class WashFlowApp {
                     this.customers.push(name.trim());
                     this.customers.sort();
                     this.updateCustomerDatalist();
-                    console.log('✅ Cliente guardado con éxito.');
-                } else {
-                    console.error('Error insertando cliente:', error);
                 }
             } catch (e) {
                 console.error('Error saving new customer:', e);
@@ -363,26 +381,15 @@ class WashFlowApp {
         }
     }
 
-    /**
-     * Utility to import customers from a JSON or Array
-     * Can be called from Console: app.importCustomers(['Juan Perez', 'Maria Garcia'])
-     */
     async importCustomers(customerList) {
-        console.log(`🚀 Iniciando importación de ${customerList.length} clientes...`);
         const formatted = customerList.map(name => ({ full_name: name.trim() }));
-        
         try {
-            const { error } = await this.supabase
-                .from('customers')
-                .insert(formatted);
-            
-            if (error) {
-                console.error('❌ Error en importación masiva:', error);
-                alert('Error al importar. Ver consola.');
-            } else {
-                console.log('✅ Importación completada.');
+            const { error } = await this.supabase.from('customers').insert(formatted);
+            if (!error) {
                 alert(`Se han importado ${customerList.length} clientes.`);
-                this.initCustomers(); // Refresh list
+                this.initCustomers();
+            } else {
+                alert('Error al importar. Ver consola.');
             }
         } catch (e) {
             console.error('Excepción en importación:', e);
@@ -396,7 +403,6 @@ class WashFlowApp {
             return;
         }
 
-        // Auto-add customer to DB if they don't exist
         this.checkAndAddCustomer(clientName);
 
         const cards = document.querySelectorAll('.subload-card');
@@ -405,25 +411,16 @@ class WashFlowApp {
         // Generate unique Order ID
         const orderId = 'ORD-' + Math.random().toString(36).substr(2, 5).toUpperCase();
 
-        // Register global order
-        this.orders[orderId] = {
-            id: orderId,
-            client: clientName,
-            totalSubloads: cards.length,
-            finishedSubloads: 0
-        };
-
-        // Pre-calculate all subloads (buckets) to get real total count
+        // Pre-calculate all subloads (buckets) with autodivision logic (> 25 lbs in 20 lb chunks)
         const allJobsData = [];
-        cards.forEach((card, i) => {
+        cards.forEach((card) => {
             const fabric = card.querySelector('.fabric-type');
             const fabricText = fabric.options[fabric.selectedIndex].text;
             const weightInput = parseFloat(card.querySelector('.weight-input').value) || 0;
             const priority = parseInt(card.querySelector('.urgency-select').value);
-            const wTimeBase = parseInt(card.querySelector('.est-wash').value);
-            const dTimeBase = parseInt(card.querySelector('.est-dry').value);
+            const wTimeBase = parseInt(card.querySelector('.est-wash').value) || 50;
+            const dTimeBase = parseInt(card.querySelector('.est-dry').value) || 45;
 
-            // Logic: If > 25, split in 20s. Else keep same.
             let weightRemaining = weightInput;
             let subBuckets = [];
             
@@ -442,9 +439,6 @@ class WashFlowApp {
             }
 
             subBuckets.forEach(bWeight => {
-                // Adjust times proportionally or keep base? 
-                // User said: "cargas mayores deben de dividirse en cargas extra (aunque sean del mismo tipo)"
-                // We'll keep the estimated times from the UI which correspond to a "normal" load.
                 allJobsData.push({
                     fabric: fabricText,
                     weight: bWeight,
@@ -455,7 +449,7 @@ class WashFlowApp {
             });
         });
 
-        // Register global order with REAL count of buckets
+        // Register global order with count of subloads
         this.orders[orderId] = {
             id: orderId,
             client: clientName,
@@ -485,14 +479,16 @@ class WashFlowApp {
         document.getElementById('subloads-wrapper').innerHTML = '';
         this.addSubloadForm();
         
+        // Close modal
+        this.closeRegisterModal();
+
         this.updateQueueBoard();
         this.saveState();
     }
 
-    // --- ALGORITHM LOGIC (Greedy Flexible Flow Shop based on Johnson) ---
+    // --- ALGORITHM LOGIC ---
 
     sortQueue() {
-        // Groups by priority (3 High, 2 Med, 1 Low)
         const h = this.queue.filter(j => j.priority === 3);
         const m = this.queue.filter(j => j.priority === 2);
         const l = this.queue.filter(j => j.priority === 1);
@@ -506,6 +502,199 @@ class WashFlowApp {
         this.queue = [...applyJohnson(h), ...applyJohnson(m), ...applyJohnson(l)];
     }
 
+    // --- DRAG AND DROP HANDLERS ---
+
+    handleDragStart(e, source, id, machineId = null) {
+        this.dragData = { source, id, machineId };
+        e.dataTransfer.setData('text/plain', JSON.stringify(this.dragData));
+        e.dataTransfer.effectAllowed = 'move';
+        
+        if (e.currentTarget && e.currentTarget.classList) {
+            e.currentTarget.classList.add('is-dragging');
+        }
+
+        // Highlight valid drop targets
+        if (source === 'queue') {
+            for (let i = 1; i <= 3; i++) {
+                if (!this.washers[i].job && !this.washers[i].outOfService) {
+                    document.getElementById(`washer-${i}`)?.classList.add('valid-drop-target');
+                }
+                if (!this.dryers[i].job && !this.dryers[i].outOfService) {
+                    document.getElementById(`dryer-${i}`)?.classList.add('valid-drop-target');
+                }
+            }
+        } else if (source === 'washer') {
+            for (let i = 1; i <= 3; i++) {
+                if (!this.dryers[i].job && !this.dryers[i].outOfService) {
+                    document.getElementById(`dryer-${i}`)?.classList.add('valid-drop-target');
+                }
+            }
+            document.getElementById('folding-list')?.classList.add('valid-drop-target');
+        } else if (source === 'dryer') {
+            document.getElementById('folding-list')?.classList.add('valid-drop-target');
+        }
+    }
+
+    handleDragEnd(e) {
+        this.dragData = null;
+        document.querySelectorAll('.is-dragging').forEach(el => el.classList.remove('is-dragging'));
+        document.querySelectorAll('.valid-drop-target').forEach(el => el.classList.remove('valid-drop-target'));
+        document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+    }
+
+    handleDragOver(e, targetType, machineId = null) {
+        if (!this.dragData) return;
+        const { source } = this.dragData;
+
+        let isValid = false;
+        if (targetType === 'washer' && machineId) {
+            isValid = source === 'queue' && !this.washers[machineId].job && !this.washers[machineId].outOfService;
+        } else if (targetType === 'dryer' && machineId) {
+            isValid = (source === 'queue' || source === 'washer') && !this.dryers[machineId].job && !this.dryers[machineId].outOfService;
+        } else if (targetType === 'folding') {
+            isValid = source === 'dryer' || source === 'washer';
+        }
+
+        if (isValid) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            e.currentTarget.classList.add('drag-over');
+        } else {
+            e.dataTransfer.dropEffect = 'none';
+        }
+    }
+
+    handleDragLeave(e) {
+        e.currentTarget.classList.remove('drag-over');
+    }
+
+    handleDrop(e, targetType, machineId = null) {
+        e.preventDefault();
+        e.currentTarget.classList.remove('drag-over');
+        document.querySelectorAll('.valid-drop-target').forEach(el => el.classList.remove('valid-drop-target'));
+        document.querySelectorAll('.is-dragging').forEach(el => el.classList.remove('is-dragging'));
+
+        if (!this.dragData) return;
+        const { source, id, machineId: sourceMachId } = this.dragData;
+
+        // Queue -> Washer
+        if (source === 'queue' && targetType === 'washer' && machineId) {
+            if (!this.washers[machineId].job && !this.washers[machineId].outOfService) {
+                this.assignJobDirectly(id, 'washer', machineId);
+            }
+        } 
+        // Queue -> Dryer (Directly without washer!)
+        else if (source === 'queue' && targetType === 'dryer' && machineId) {
+            if (!this.dryers[machineId].job && !this.dryers[machineId].outOfService) {
+                this.assignJobDirectly(id, 'dryer', machineId);
+            }
+        } 
+        // Washer -> Dryer
+        else if (source === 'washer' && targetType === 'dryer' && machineId) {
+            if (!this.dryers[machineId].job && !this.dryers[machineId].outOfService) {
+                this.transferWasherToDryer(sourceMachId, machineId);
+            }
+        } 
+        // Washer -> Folding (skip dryer if only washed)
+        else if (source === 'washer' && targetType === 'folding') {
+            this.finishWasherDirectly(sourceMachId);
+        }
+        // Dryer -> Folding (finish drying)
+        else if (source === 'dryer' && targetType === 'folding') {
+            this.finishJob(sourceMachId);
+        }
+
+        this.dragData = null;
+    }
+
+    // Direct Assignment (Drag & Drop helper)
+    assignJobDirectly(jobId, targetType, machineId) {
+        const qIdx = this.queue.findIndex(j => j.id === jobId);
+        if (qIdx === -1) return;
+        const job = this.queue.splice(qIdx, 1)[0];
+
+        if (!job.cycleTrack) job.cycleTrack = {};
+        if (targetType === 'washer') {
+            job.cycleTrack.startedWashAt = Date.now();
+        } else {
+            job.cycleTrack.startedDryAt = Date.now();
+        }
+
+        const targetDict = targetType === 'washer' ? this.washers : this.dryers;
+        if (targetDict[machineId].interval) clearInterval(targetDict[machineId].interval);
+        
+        targetDict[machineId].job = job;
+        targetDict[machineId].job.isPaused = false;
+        targetDict[machineId].timeRemaining = targetType === 'washer' ? job.washTime : job.dryTime;
+
+        targetDict[machineId].interval = setInterval(() => {
+            if (!targetDict[machineId].job.isPaused && targetDict[machineId].timeRemaining > 0) {
+                targetDict[machineId].timeRemaining--;
+                this.renderMachines();
+                this.saveState();
+            }
+        }, 60000);
+
+        this.updateQueueBoard();
+        this.renderMachines();
+        this.saveState();
+    }
+
+    // Transfer from washer to dryer
+    transferWasherToDryer(washerId, dryerId) {
+        const washer = this.washers[washerId];
+        const dryer = this.dryers[dryerId];
+        if (!washer || !washer.job || !dryer || dryer.job || dryer.outOfService) return;
+
+        const job = washer.job;
+        washer.job = null;
+        clearInterval(washer.interval);
+
+        if (job.cycleTrack) {
+            job.cycleTrack.endedWashAt = Date.now();
+            job.cycleTrack.startedDryAt = Date.now();
+        }
+
+        if (dryer.interval) clearInterval(dryer.interval);
+        dryer.job = job;
+        dryer.job.isPaused = false;
+        dryer.timeRemaining = job.dryTime;
+
+        dryer.interval = setInterval(() => {
+            if (!dryer.job.isPaused && dryer.timeRemaining > 0) {
+                dryer.timeRemaining--;
+                this.renderMachines();
+                this.saveState();
+            }
+        }, 60000);
+
+        this.renderMachines();
+        this.saveState();
+    }
+
+    // Direct wash completion to folding
+    finishWasherDirectly(washerId) {
+        const washer = this.washers[washerId];
+        if (!washer || !washer.job) return;
+
+        clearInterval(washer.interval);
+        const job = washer.job;
+        
+        if (job.orderId && this.orders[job.orderId]) {
+            this.orders[job.orderId].finishedSubloads++;
+        }
+
+        if (job.cycleTrack) {
+            job.cycleTrack.endedWashAt = Date.now();
+            this.logJobHistory(job);
+        }
+
+        washer.job = null;
+        this.renderMachines();
+        this.renderFoldingBoard();
+        this.saveState();
+    }
+
     // --- BOARDS RENDERING ---
 
     updateQueueBoard() {
@@ -516,30 +705,38 @@ class WashFlowApp {
         listEl.innerHTML = '';
 
         this.queue.forEach((job, index) => {
-            const isWashFirst = job.washTime < job.dryTime;
-            
             let urgencyLabel = 'No urgente';
             let badgeClass = '';
             if (job.priority === 2) { urgencyLabel = 'Urgente'; badgeClass = 'urgent'; }
             if (job.priority === 3) { urgencyLabel = 'Para hoy'; badgeClass = 'today'; }
             
             listEl.innerHTML += `
-                <div class="job-card">
-                    <div class="job-header">
-                        <div>
-                            <div class="job-client"><span class="queue-number">#${index + 1}</span> ${job.client} <span style="font-size:0.7rem; color:var(--text-muted);">[${job.orderId}]</span></div>
-                            <div class="job-subload">Carga ${job.subloadIndex} • <i class="ph ph-t-shirt"></i> ${job.fabric} • ${job.weight}lbs</div>
+                <div class="job-card" draggable="true" ondragstart="app.handleDragStart(event, 'queue', ${job.id})" ondragend="app.handleDragEnd(event)">
+                    <div class="job-card-header">
+                        <div class="job-card-title-group">
+                            <span class="queue-num">#${index + 1}</span>
+                            <span class="job-client-name" title="${job.client}">${job.client}</span>
+                            <span class="job-order-badge">[${job.orderId}]</span>
                         </div>
-                        <span class="job-badge ${badgeClass}" title="Razón de Orden">${urgencyLabel}</span>
+                        <span class="job-badge ${badgeClass}">${urgencyLabel}</span>
                     </div>
-                    <div class="job-details">
-                        <span><i class="ph ph-drop"></i> ${job.washTime}m</span>
-                        <span><i class="ph ph-wind"></i> ${job.dryTime}m</span>
+                    <div class="job-card-info">
+                        <span class="info-pill"><i class="ph ph-stack"></i> Carga ${job.subloadIndex}</span>
+                        <span class="info-pill"><i class="ph ph-t-shirt"></i> ${job.fabric}</span>
+                        <span class="info-pill"><i class="ph ph-scales"></i> ${job.weight} lb</span>
                     </div>
-                    <div class="job-actions">
-                        <button class="action-btn btn-wash" onclick="app.openAssignModal(${job.id}, 'washer')">
-                            <i class="ph ph-sign-out"></i> Lavar
+                    <div class="job-card-times">
+                        <span class="time-item"><i class="ph ph-drop"></i> ${job.washTime}m lavado</span>
+                        <span class="time-item"><i class="ph ph-wind"></i> ${job.dryTime}m secado</span>
+                    </div>
+                    <div class="job-card-actions">
+                        <button class="action-btn btn-wash" onclick="app.openAssignModal(${job.id}, 'washer')" title="Asignar a Lavadora">
+                            <i class="ph ph-drop"></i> Lavar
                         </button>
+                        <button class="action-btn btn-dry" onclick="app.openAssignModal(${job.id}, 'dryer')" title="Asignar directamente a Secadora">
+                            <i class="ph ph-wind"></i> Secar
+                        </button>
+                        <span class="drag-hint" title="Arrastra a cualquier lavadora o secadora libre"><i class="ph ph-dots-six-vertical"></i></span>
                     </div>
                 </div>
             `;
@@ -547,50 +744,130 @@ class WashFlowApp {
     }
 
     renderMachines() {
-        // Render Washers
+        // Render Washers (Strictly 3 slots fitting on screen)
         for(let i=1; i<=3; i++) {
             const w = this.washers[i];
             const el = document.getElementById(`washer-${i}`);
+            if (!el) continue;
+
             if(w.job) {
-                el.className = 'machine-slot active washer-active';
+                const isFinished = w.timeRemaining <= 0;
+                const isAttention = (w.timeRemaining <= 5 && !isFinished) || w.job.isPaused;
+                let stateClass = isFinished ? 'state-finished' : (isAttention ? 'state-attention' : '');
+
+                el.className = `machine-slot active washer-active ${stateClass}`;
+                el.setAttribute('draggable', 'true');
+                el.setAttribute('ondragstart', `app.handleDragStart(event, 'washer', ${w.job.id}, ${i})`);
+                el.setAttribute('ondragend', `app.handleDragEnd(event)`);
+                el.removeAttribute('ondragover');
+                el.removeAttribute('ondrop');
                 el.innerHTML = this.generateMachineRunningHTML('LAV', i, w.job, w.timeRemaining, 'dryer');
             } else if(w.outOfService) {
                 el.className = 'machine-slot out-of-service';
+                el.removeAttribute('draggable');
+                el.removeAttribute('ondragstart');
+                el.removeAttribute('ondragover');
+                el.removeAttribute('ondrop');
                 el.innerHTML = `
-                    <div class="machine-label" style="color:var(--accent-danger)">LAV ${i}</div>
-                    <div class="machine-status" style="color:var(--accent-danger)"><i class="ph ph-warning"></i> Fuera de Servicio</div>
-                    <button class="secondary-btn" style="margin-top:auto; padding:0.5rem; font-size:0.8rem" onclick="app.toggleMachineStatus('washer', ${i})">Habilitar</button>
+                    <div class="machine-slot-header">
+                        <span class="machine-tag" style="color:var(--state-red)">LAV ${i}</span>
+                        <span class="machine-badge badge-danger">FUERA DE SERVICIO</span>
+                    </div>
+                    <div class="machine-empty-body">
+                        <i class="ph ph-warning" style="font-size:1.6rem; color:var(--state-red);"></i>
+                        <span class="empty-text" style="color:var(--state-red); font-weight:700;">En Mantenimiento</span>
+                    </div>
+                    <div class="machine-empty-footer" style="justify-content:center;">
+                        <button class="enable-btn" onclick="app.toggleMachineStatus('washer', ${i})">
+                            <i class="ph ph-check"></i> Habilitar
+                        </button>
+                    </div>
                 `;
             } else {
                 el.className = 'machine-slot empty';
+                el.removeAttribute('draggable');
+                el.removeAttribute('ondragstart');
+                el.setAttribute('ondragover', `app.handleDragOver(event, 'washer', ${i})`);
+                el.setAttribute('ondragleave', `app.handleDragLeave(event)`);
+                el.setAttribute('ondrop', `app.handleDrop(event, 'washer', ${i})`);
                 el.innerHTML = `
-                    <div class="machine-label">LAV ${i}</div>
-                    <div class="machine-status">Libre</div>
-                    <button class="secondary-btn" style="margin-top:auto; padding:0.5rem; border:none; color:var(--text-muted); opacity:0.3; transition:0.3s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3" onclick="app.toggleMachineStatus('washer', ${i})"><i class="ph ph-warning-octagon"></i> Falla</button>
+                    <div class="machine-slot-header">
+                        <span class="machine-tag">LAV ${i}</span>
+                        <span class="machine-badge badge-free">LIBRE</span>
+                    </div>
+                    <div class="machine-empty-body">
+                        <i class="ph ph-tray-arrow-down empty-icon"></i>
+                        <span class="empty-text">Arrastra una carga aquí</span>
+                    </div>
+                    <div class="machine-empty-footer">
+                        <button class="falla-btn" onclick="app.toggleMachineStatus('washer', ${i})">
+                            <i class="ph ph-warning-octagon"></i> Falla
+                        </button>
+                    </div>
                 `;
             }
         }
 
-        // Render Dryers
+        // Render Dryers (Strictly 3 slots fitting on screen)
         for(let i=1; i<=3; i++) {
             const d = this.dryers[i];
             const el = document.getElementById(`dryer-${i}`);
+            if (!el) continue;
+
             if(d.job) {
-                el.className = 'machine-slot active dryer-active';
+                const isFinished = d.timeRemaining <= 0;
+                const isAttention = (d.timeRemaining <= 5 && !isFinished) || d.job.isPaused;
+                let stateClass = isFinished ? 'state-finished' : (isAttention ? 'state-attention' : '');
+
+                el.className = `machine-slot active dryer-active ${stateClass}`;
+                el.setAttribute('draggable', 'true');
+                el.setAttribute('ondragstart', `app.handleDragStart(event, 'dryer', ${d.job.id}, ${i})`);
+                el.setAttribute('ondragend', `app.handleDragEnd(event)`);
+                el.removeAttribute('ondragover');
+                el.removeAttribute('ondrop');
                 el.innerHTML = this.generateMachineRunningHTML('SEC', i, d.job, d.timeRemaining, 'done');
             } else if(d.outOfService) {
                 el.className = 'machine-slot out-of-service';
+                el.removeAttribute('draggable');
+                el.removeAttribute('ondragstart');
+                el.removeAttribute('ondragover');
+                el.removeAttribute('ondrop');
                 el.innerHTML = `
-                    <div class="machine-label" style="color:var(--accent-danger)">SEC ${i}</div>
-                    <div class="machine-status" style="color:var(--accent-danger)"><i class="ph ph-warning"></i> Fuera de Servicio</div>
-                    <button class="secondary-btn" style="margin-top:auto; padding:0.5rem; font-size:0.8rem" onclick="app.toggleMachineStatus('dryer', ${i})">Habilitar</button>
+                    <div class="machine-slot-header">
+                        <span class="machine-tag" style="color:var(--state-red)">SEC ${i}</span>
+                        <span class="machine-badge badge-danger">FUERA DE SERVICIO</span>
+                    </div>
+                    <div class="machine-empty-body">
+                        <i class="ph ph-warning" style="font-size:1.6rem; color:var(--state-red);"></i>
+                        <span class="empty-text" style="color:var(--state-red); font-weight:700;">En Mantenimiento</span>
+                    </div>
+                    <div class="machine-empty-footer" style="justify-content:center;">
+                        <button class="enable-btn" onclick="app.toggleMachineStatus('dryer', ${i})">
+                            <i class="ph ph-check"></i> Habilitar
+                        </button>
+                    </div>
                 `;
             } else {
                 el.className = 'machine-slot empty';
+                el.removeAttribute('draggable');
+                el.removeAttribute('ondragstart');
+                el.setAttribute('ondragover', `app.handleDragOver(event, 'dryer', ${i})`);
+                el.setAttribute('ondragleave', `app.handleDragLeave(event)`);
+                el.setAttribute('ondrop', `app.handleDrop(event, 'dryer', ${i})`);
                 el.innerHTML = `
-                    <div class="machine-label">SEC ${i}</div>
-                    <div class="machine-status">Libre</div>
-                    <button class="secondary-btn" style="margin-top:auto; padding:0.5rem; border:none; color:var(--text-muted); opacity:0.3; transition:0.3s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3" onclick="app.toggleMachineStatus('dryer', ${i})"><i class="ph ph-warning-octagon"></i> Falla</button>
+                    <div class="machine-slot-header">
+                        <span class="machine-tag">SEC ${i}</span>
+                        <span class="machine-badge badge-free">LIBRE</span>
+                    </div>
+                    <div class="machine-empty-body">
+                        <i class="ph ph-tray-arrow-down empty-icon"></i>
+                        <span class="empty-text">Arrastra una carga aquí</span>
+                    </div>
+                    <div class="machine-empty-footer">
+                        <button class="falla-btn" onclick="app.toggleMachineStatus('dryer', ${i})">
+                            <i class="ph ph-warning-octagon"></i> Falla
+                        </button>
+                    </div>
                 `;
             }
         }
@@ -599,40 +876,77 @@ class WashFlowApp {
     }
 
     generateMachineRunningHTML(label, machineNum, job, minsLeft, nextTarget) {
-        const isUrgent = minsLeft <= 5 ? 'urgent' : '';
-        const timeStr = job.isPaused ? 'PAUSADO' : (minsLeft <= 0 ? '¡Listo!' : `${minsLeft}m`);
-        const pauseClass = job.isPaused ? 'paused' : '';
-
+        const isFinished = minsLeft <= 0;
+        const isUrgent = minsLeft <= 5 && !isFinished;
         const mType = nextTarget === 'dryer' ? 'washer' : 'dryer';
 
-        // Colored Active Controls
-        let pauseBtnHtml = job.isPaused
-            ? `<button class="action-btn" style="flex:0.5; background:var(--accent-success); color:var(--bg-dark); border:none" onclick="app.togglePause('${mType}', ${machineNum})" title="Reanudar"><i class="ph ph-play"></i></button>`
-            : `<button class="action-btn" style="flex:0.5; background:rgba(255,255,255,0.15); color:#fff; border:1px solid rgba(255,255,255,0.3)" onclick="app.togglePause('${mType}', ${machineNum})" title="Pausar"><i class="ph ph-pause"></i></button>`;
+        let statusBadgeText = '';
+        let statusBadgeClass = '';
+        let timerStatusClass = '';
 
-        let editBtnHtml = `<button class="action-btn" style="flex:0.5; background:rgba(255,255,255,0.15); color:#fff; border:1px solid rgba(255,255,255,0.3)" onclick="app.openEditModal('${mType}', ${machineNum})" title="Editar"><i class="ph ph-pencil-simple"></i></button>`;
+        if (job.isPaused) {
+            statusBadgeText = 'PAUSADO';
+            statusBadgeClass = 'badge-paused';
+            timerStatusClass = 'timer-attention';
+        } else if (isFinished) {
+            statusBadgeText = '¡TERMINADO!';
+            statusBadgeClass = 'badge-finished';
+            timerStatusClass = 'timer-finished';
+        } else if (isUrgent) {
+            statusBadgeText = mType === 'washer' ? 'LAVANDO' : 'SECANDO';
+            statusBadgeClass = 'badge-running';
+            timerStatusClass = 'timer-attention';
+        } else {
+            statusBadgeText = mType === 'washer' ? 'LAVANDO' : 'SECANDO';
+            statusBadgeClass = 'badge-running';
+            timerStatusClass = '';
+        }
+
+        const timeStr = job.isPaused ? 'PAUSA' : (isFinished ? '¡LISTO!' : `${minsLeft} min`);
+        const timerSubtext = isFinished ? 'Listo para retirar' : (job.isPaused ? 'En espera' : 'Tiempo restante');
 
         let primaryBtn = '';
         if(nextTarget === 'dryer') {
-            primaryBtn = `<button class="action-btn btn-dry" onclick="app.openAssignModal(${job.id}, 'dryer', ${machineNum}, 'washer')" style="flex:2">A Secadora <i class="ph ph-arrow-right"></i></button>`;
+            const btnClass = isFinished ? 'btn-finished-action' : (isUrgent ? 'btn-attention-action' : 'btn-primary-action');
+            primaryBtn = `<button class="action-btn ${btnClass}" onclick="app.openAssignModal(${job.id}, 'dryer', ${machineNum}, 'washer')" title="Pasar a Secadora (o arrastra la tarjeta a una secadora libre)"><i class="ph ph-wind"></i> A Secadora</button>`;
         } else {
-            primaryBtn = `<button class="action-btn btn-done" onclick="app.finishJob(${machineNum})" style="flex:2"><i class="ph ph-check"></i> Terminar</button>`;
+            const btnClass = isFinished ? 'btn-finished-action' : 'btn-primary-action';
+            primaryBtn = `<button class="action-btn ${btnClass}" onclick="app.finishJob(${machineNum})" title="Terminar y Pasar a Doblado (o arrastra a la zona de doblado)"><i class="ph ph-check-circle"></i> Terminar</button>`;
         }
 
+        let pauseBtn = job.isPaused
+            ? `<button class="action-btn btn-icon-action" style="color:var(--state-yellow);" onclick="app.togglePause('${mType}', ${machineNum})" title="Reanudar"><i class="ph ph-play"></i></button>`
+            : `<button class="action-btn btn-icon-action" onclick="app.togglePause('${mType}', ${machineNum})" title="Pausar"><i class="ph ph-pause"></i></button>`;
+
+        let editBtn = `<button class="action-btn btn-icon-action" onclick="app.openEditModal('${mType}', ${machineNum})" title="Editar tiempo o cliente"><i class="ph ph-pencil-simple"></i></button>`;
+
         return `
-            <div class="machine-label">${label} ${machineNum}</div>
-            <div class="job-client" style="margin-top:1.5rem">${job.client} <span style="font-size:0.7rem; color:var(--text-muted); opacity:0.8;">[${job.orderId}]</span></div>
-            <div class="job-subload">Carga ${job.subloadIndex} • <i class="ph ph-t-shirt"></i> ${job.fabric}</div>
-            
-            <div class="timer-display">
-                <span class="timer-clock ${isUrgent} ${pauseClass}">${timeStr}</span>
-                <span class="job-subload" style="font-size:0.7rem">TIEMPO RESTANTE</span>
+            <div class="machine-slot-header">
+                <span class="machine-tag">${label} ${machineNum}</span>
+                <span class="machine-badge ${statusBadgeClass}">${statusBadgeText}</span>
             </div>
 
-            <div class="job-actions" style="margin-top:1rem">
+            <div class="machine-slot-body">
+                <div class="mach-client-row">
+                    <span class="mach-client-name" title="${job.client}">${job.client}</span>
+                    <span class="mach-order-id">[${job.orderId}]</span>
+                </div>
+                <div class="mach-details-row">
+                    <span class="mach-detail-pill"><i class="ph ph-stack"></i> Carga ${job.subloadIndex}</span>
+                    <span class="mach-detail-pill"><i class="ph ph-t-shirt"></i> ${job.fabric}</span>
+                    <span class="mach-detail-pill"><i class="ph ph-scales"></i> ${job.weight} lb</span>
+                </div>
+            </div>
+
+            <div class="machine-timer-row ${timerStatusClass}">
+                <div class="mach-timer-value">${timeStr}</div>
+                <div class="mach-timer-label">${timerSubtext}</div>
+            </div>
+
+            <div class="machine-actions-row">
                 ${primaryBtn}
-                ${pauseBtnHtml}
-                ${editBtnHtml}
+                ${pauseBtn}
+                ${editBtn}
             </div>
         `;
     }
@@ -648,17 +962,24 @@ class WashFlowApp {
         const modal = document.getElementById('assign-modal');
         const optsContainer = document.getElementById('assign-options');
         const details = document.getElementById('assign-job-details');
+        const title = document.getElementById('assign-modal-title');
 
-        // Find job details
         let job = null;
         if(sourceMachType === 'washer') job = this.washers[sourceMachId].job;
+        else if(sourceMachType === 'dryer') job = this.dryers[sourceMachId].job;
         else job = this.queue.find(j => j.id === jobId);
 
-        details.textContent = `Cliente: ${job.client} - Carga ${job.subloadIndex}`;
+        if (!job) return;
+
+        const typeName = targetType === 'washer' ? 'Lavadora' : 'Secadora';
+        if (title) {
+            title.innerHTML = `<i class="ph ph-arrows-out-cardinal"></i> Asignar a ${typeName}`;
+        }
+
+        details.textContent = `Cliente: ${job.client} - Carga ${job.subloadIndex} (${job.fabric})`;
 
         optsContainer.innerHTML = '';
         const dict = targetType === 'washer' ? this.washers : this.dryers;
-        const typeName = targetType === 'washer' ? 'Lavadora' : 'Secadora';
 
         for(let i=1; i<=3; i++) {
             const m = dict[i];
@@ -688,10 +1009,9 @@ class WashFlowApp {
         // 1. Get Job & Remove from Source
         if(this.sourceMachType === 'washer') {
             job = this.washers[this.sourceMachId].job;
-            this.washers[this.sourceMachId].job = null; // Free washer
+            this.washers[this.sourceMachId].job = null;
             clearInterval(this.washers[this.sourceMachId].interval);
             
-            // Log real wash end and dry start
             if(job.cycleTrack) {
                 job.cycleTrack.endedWashAt = Date.now();
                 job.cycleTrack.startedDryAt = Date.now();
@@ -699,11 +1019,15 @@ class WashFlowApp {
 
         } else {
             const qIdx = this.queue.findIndex(j => j.id === this.activeJobId);
+            if (qIdx === -1) return;
             job = this.queue.splice(qIdx, 1)[0];
             
-            // Initiate tracking
             if(!job.cycleTrack) job.cycleTrack = {};
-            job.cycleTrack.startedWashAt = Date.now();
+            if (this.activeTargetType === 'washer') {
+                job.cycleTrack.startedWashAt = Date.now();
+            } else {
+                job.cycleTrack.startedDryAt = Date.now();
+            }
         }
 
         // 2. Assign to Target
@@ -717,10 +1041,10 @@ class WashFlowApp {
         targetDict[machineId].interval = setInterval(() => {
             if(!targetDict[machineId].job.isPaused && targetDict[machineId].timeRemaining > 0) {
                 targetDict[machineId].timeRemaining--;
-                this.renderMachines(); // re-render to update clock
+                this.renderMachines();
                 this.saveState();
             }
-        }, 60000); // 1 minute in real life
+        }, 60000);
 
         this.closeModal();
         this.updateQueueBoard();
@@ -732,12 +1056,10 @@ class WashFlowApp {
         clearInterval(this.dryers[dryerId].interval);
         const job = this.dryers[dryerId].job;
         
-        // Notify the Order global object that one of its subloads has finished secadora
         if (job && job.orderId && this.orders[job.orderId]) {
             this.orders[job.orderId].finishedSubloads++;
         }
 
-        // Finalize Tracking and Send to Analytics
         if(job && job.cycleTrack) {
             job.cycleTrack.endedDryAt = Date.now();
             this.logJobHistory(job);
@@ -750,11 +1072,10 @@ class WashFlowApp {
     }
 
     async logJobHistory(job) {
-        // Calculate diff in minutes
-        const realWash = job.cycleTrack.startedWashAt && job.cycleTrack.endedWashAt 
+        const realWash = job.cycleTrack?.startedWashAt && job.cycleTrack?.endedWashAt 
             ? Math.round((job.cycleTrack.endedWashAt - job.cycleTrack.startedWashAt) / 60000) 
             : job.washTime; 
-        const realDry = job.cycleTrack.startedDryAt && job.cycleTrack.endedDryAt
+        const realDry = job.cycleTrack?.startedDryAt && job.cycleTrack?.endedDryAt
             ? Math.round((job.cycleTrack.endedDryAt - job.cycleTrack.startedDryAt) / 60000)
             : job.dryTime;
             
@@ -802,14 +1123,14 @@ class WashFlowApp {
         if(state && state.job) {
             document.getElementById('edit-client-name').value = state.job.client;
             document.getElementById('edit-time-remaining').value = state.timeRemaining;
-            document.getElementById('edit-job-modal').style.display = 'flex';
+            document.getElementById('edit-job-modal').classList.add('active');
         }
     }
 
     closeEditModal() {
         this.editMachType = null;
         this.editMachId = null;
-        document.getElementById('edit-job-modal').style.display = 'none';
+        document.getElementById('edit-job-modal').classList.remove('active');
     }
 
     saveJobEdits() {
@@ -839,14 +1160,11 @@ class WashFlowApp {
         
         let foldingCardsCount = 0;
 
-        // Iterate over global track of orders
         Object.values(this.orders).forEach(order => {
-            // Only show orders that have started flowing out of dryers (at least 1 finished)
             if (order.finishedSubloads > 0) {
                 foldingCardsCount++;
                 const isComplete = order.finishedSubloads === order.totalSubloads;
                 
-                // Build visual pip bar for progress
                 let pipsHTML = '';
                 for(let p=0; p<order.totalSubloads; p++) {
                     pipsHTML += `<div class="pip ${p < order.finishedSubloads ? 'done' : ''}"></div>`;
@@ -854,32 +1172,36 @@ class WashFlowApp {
 
                 if (!isComplete) {
                     listEl.innerHTML += `
-                        <div class="job-card" style="opacity: 0.8; border-color: rgba(255,165,2,0.3);">
-                            <div class="job-header">
-                                <div class="job-client">${order.client}</div>
-                                <span class="job-badge" style="color:var(--text-muted); border:1px solid var(--text-muted)">EN ESPERA</span>
+                        <div class="job-card folding-card folding-waiting">
+                            <div class="job-card-header">
+                                <div class="job-card-title-group">
+                                    <span class="job-client-name">${order.client}</span>
+                                    <span class="job-order-badge">[${order.id}]</span>
+                                </div>
+                                <span class="job-badge" style="color:var(--state-yellow); border-color:var(--state-yellow-border);">EN ESPERA</span>
                             </div>
-                            <div class="job-subload">Orden: ${order.id}</div>
                             <div class="order-status-bar">${pipsHTML}</div>
-                            <div style="font-size:0.8rem; margin-top:0.5rem; color:var(--priority-medium);">
+                            <div class="folding-subtext" style="color:var(--state-yellow);">
                                 <i class="ph ph-spinner ph-spin"></i> Falta terminar ${order.totalSubloads - order.finishedSubloads} carga(s) para doblar.
                             </div>
                         </div>
                     `;
                 } else {
                     listEl.innerHTML += `
-                        <div class="job-card" style="border-color: var(--accent-success); background: rgba(46, 213, 115, 0.05);">
-                            <div class="job-header">
-                                <div class="job-client" style="color: var(--accent-success)">${order.client}</div>
-                                <span class="job-badge" style="color:var(--accent-success); border:1px solid var(--accent-success); background:rgba(46, 213, 115, 0.1);">LISTO</span>
+                        <div class="job-card folding-card folding-ready">
+                            <div class="job-card-header">
+                                <div class="job-card-title-group">
+                                    <span class="job-client-name">${order.client}</span>
+                                    <span class="job-order-badge">[${order.id}]</span>
+                                </div>
+                                <span class="job-badge" style="color:var(--state-red); border-color:var(--state-red-border); background:var(--state-red-bg);">¡LISTO!</span>
                             </div>
-                            <div class="job-subload">Orden: ${order.id}</div>
                             <div class="order-status-bar">${pipsHTML}</div>
-                            <div style="font-size:0.8rem; margin-top:0.5rem; color:var(--text-muted);">
+                            <div class="folding-subtext">
                                 Listo para doblar y empacar.
                             </div>
-                            <div class="job-actions" style="margin-top:1rem;">
-                                <button class="action-btn btn-done" onclick="app.deliverOrder('${order.id}')" style="width:100%">
+                            <div class="job-card-actions" style="margin-top:0.4rem;">
+                                <button class="action-btn btn-deliver" onclick="app.deliverOrder('${order.id}')">
                                     <i class="ph ph-check-square"></i> Marcar Entregado
                                 </button>
                             </div>
@@ -915,7 +1237,7 @@ class WashFlowApp {
             if(this.dryers[i].job && !this.dryers[i].job.isPaused) runningDryMins += this.dryers[i].timeRemaining;
         }
 
-        activeWashers = activeWashers || 1; // Prevent Div0
+        activeWashers = activeWashers || 1;
         activeDryers = activeDryers || 1;
 
         const totalTrafficMins = Math.round((queueWashMins + runningWashMins) / activeWashers + (queueDryMins + runningDryMins) / activeDryers);
@@ -923,11 +1245,10 @@ class WashFlowApp {
         let orderWashTime = 0; let orderDryTime = 0;
         const cards = document.querySelectorAll('.subload-card');
         cards.forEach(card => {
-            const wBase = parseInt(card.querySelector('.est-wash').value) || 0;
-            const dBase = parseInt(card.querySelector('.est-dry').value) || 0;
-            const weightInput = parseFloat(card.querySelector('.weight-input').value) || 0;
+            const wBase = parseInt(card.querySelector('.est-wash')?.value) || 0;
+            const dBase = parseInt(card.querySelector('.est-dry')?.value) || 0;
+            const weightInput = parseFloat(card.querySelector('.weight-input')?.value) || 0;
             
-            // Calculate how many physical loads this weight generates
             let numBuckets = 1;
             if (weightInput > 25) {
                 numBuckets = Math.ceil(weightInput / 20);
@@ -943,30 +1264,21 @@ class WashFlowApp {
         let completionDate = new Date();
         completionDate.setMinutes(completionDate.getMinutes() + totalMinsAdded);
 
-        // Turno Laboral Overflow (7 AM a 16:00 PM - último inicio)
         let jumps = 0;
-        // Si el cálculo cae fuera del horario, empujar al día siguiente a las 7 AM
         while (completionDate.getHours() >= 16 || completionDate.getHours() < 7) {
-            jumps++; // Prevent infinite loops in extreme edge cases
+            jumps++;
             if(jumps > 30) break;
             
-            // Si nos pasamos de las 16:00, tomamos los minutos sobrantes de "ese día de trabajo"
             if (completionDate.getHours() >= 16) {
-                // Cuántos minutos exceden de las 16:00
                 const diffInMins = ((completionDate.getHours() - 16) * 60) + completionDate.getMinutes();
-                // Saltamos al sig. día
                 completionDate.setDate(completionDate.getDate() + 1);
-                // Ponemos a las 7 AM, y le sumamos los minutos que traíamos de deuda
                 completionDate.setHours(7, diffInMins, 0, 0);
-            }
-            // Si por pura matemática cayó antes de las 7am (ej, un remanente se sumó a las 00:00), lo forzamos a las 7
-            else if (completionDate.getHours() < 7) {
+            } else if (completionDate.getHours() < 7) {
                 const diffInMins = (completionDate.getHours() * 60) + completionDate.getMinutes();
                 completionDate.setHours(7, diffInMins, 0, 0);
             }
         }
         
-        const now = new Date();
         const diffInDays = Math.floor((completionDate.getTime() - new Date().setHours(0,0,0,0)) / (1000 * 60 * 60 * 24));
         
         let dayStr = "";
@@ -975,12 +1287,10 @@ class WashFlowApp {
         else {
             const formatter = new Intl.DateTimeFormat('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
             dayStr = formatter.format(completionDate) + " - ";
-            // Capitalizar la primera letra del dia
             dayStr = dayStr.charAt(0).toUpperCase() + dayStr.slice(1);
         }
 
         const timeStr = completionDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-        
         const badgeEl = document.getElementById('eta-badge');
         if(!badgeEl) return;
         
@@ -989,7 +1299,7 @@ class WashFlowApp {
             badgeEl.innerHTML = `<i class="ph ph-calendar-plus"></i> Extendido: SLA ${dayStr}${timeStr}`;
         } else {
             badgeEl.className = 'eta-badge today';
-            badgeEl.innerHTML = `<i class="ph ph-clock"></i> Entrega Rápida: ${dayStr}${timeStr}`;
+            badgeEl.innerHTML = `<i class="ph ph-clock"></i> Entrega: ${dayStr}${timeStr}`;
         }
     }
 
@@ -1020,7 +1330,7 @@ class WashFlowApp {
         document.getElementById('analytics-view').style.display = 'flex';
         
         const tbody = document.getElementById('analytics-tbody');
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;"><i class="ph ph-spinner ph-spin"></i> Cargando Historial...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;"><i class="ph ph-spinner ph-spin"></i> Cargando Historial...</td></tr>';
 
         try {
             const { data, error } = await this.supabase
@@ -1033,7 +1343,7 @@ class WashFlowApp {
             
             tbody.innerHTML = '';
             if(data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--text-muted)">Aún no hay registros de cargas terminadas.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:var(--text-muted)">Aún no hay registros de cargas terminadas.</td></tr>';
                 return;
             }
 
@@ -1053,27 +1363,27 @@ class WashFlowApp {
                 tbody.innerHTML += `
                     <tr>
                         <td style="color:var(--text-muted); font-size:0.8rem">${dateStr}</td>
-                        <td style="font-weight:700; color:var(--primary)">${row.order_id}</td>
+                        <td style="font-weight:700; color:var(--text-primary)">${row.order_id}</td>
                         <td>#${row.subload}</td>
                         <td>${row.fabric}</td>
                         <td>${row.weight} lbs</td>
                         <td>${row.est_wash}m / <strong>${row.real_wash}m</strong></td>
                         <td>${row.est_dry}m / <strong>${row.real_dry}m</strong></td>
                         <td><span class="${diffClass}">${diffText}</span></td>
-                        <td><button onclick="app.deleteHistoryRecord('${row.id}')" style="background:transparent; border:none; color:var(--accent-danger); cursor:pointer;" title="Borrar Registro"><i class="ph ph-trash"></i></button></td>
+                        <td><button onclick="app.deleteHistoryRecord('${row.id}')" style="background:transparent; border:none; color:var(--state-red); cursor:pointer;" title="Borrar Registro"><i class="ph ph-trash"></i></button></td>
                     </tr>
                 `;
             });
             
         } catch(err) {
             console.error(err);
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--accent-danger)">Error cargando Supabase. Revisa la consola o si creaste la tabla.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:var(--state-red)">Error cargando Supabase. Revisa la consola o si creaste la tabla.</td></tr>';
         }
     }
 
     exitAdmin() {
         document.getElementById('analytics-view').style.display = 'none';
-        document.getElementById('dashboard-view').style.display = 'flex';
+        document.getElementById('dashboard-view').style.display = 'grid';
     }
 
     async deleteHistoryRecord(id) {
@@ -1081,7 +1391,7 @@ class WashFlowApp {
         try {
             const { error } = await this.supabase.from('job_history').delete().eq('id', id);
             if(error) throw error;
-            this.showAnalytics(); // Refresh
+            this.showAnalytics();
         } catch(err) { console.error(err); alert("Error borrando el registro."); }
     }
 
@@ -1092,7 +1402,6 @@ class WashFlowApp {
             if(!data || data.length === 0) return alert("No hay datos para exportar");
 
             let csvContent = "data:text/csv;charset=utf-8,";
-            // Headers
             csvContent += "Fecha,Orden,Carga_Num,Tela,Peso_lbs,Lavado_Estimado,Lavado_Real,Secado_Estimado,Secado_Real,Desviacion_Total_Minutos\n";
             
             data.forEach(row => {
@@ -1103,17 +1412,17 @@ class WashFlowApp {
                csvContent += `"${dateStr}","${row.order_id}",${row.subload},"${row.fabric}",${row.weight},${row.est_wash},${row.real_wash},${row.est_dry},${row.real_dry},${diff}\n`;
             });
 
-            // Trigger DL Download
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement("a");
             link.setAttribute("href", encodedUri);
-            link.setAttribute("download", `WashFlow_Analytics_${new Date().toLocaleDateString().replace(/\//g,'-')}.csv`); // CSV es retrocompatible perfecto con excel
-            document.body.appendChild(link); // Required for FF
+            link.setAttribute("download", `WashFlow_Analytics_${new Date().toLocaleDateString().replace(/\//g,'-')}.csv`);
+            document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
 
-        } catch(err) { console.error(err); alert("Falló la exportación.")}
+        } catch(err) { console.error(err); alert("Falló la exportación."); }
     }
+
     toggleCustomerManager() {
         const panel = document.getElementById('customer-manager');
         panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
@@ -1123,10 +1432,7 @@ class WashFlowApp {
         const raw = document.getElementById('import-names-area').value.trim();
         if (!raw) return;
 
-        // Split by new line OR comma
         let names = raw.split(/[\n,]+/).map(n => n.trim()).filter(n => n.length > 0);
-        
-        // Final cleaning: only unique names
         names = [...new Set(names)];
 
         if (confirm(`¿Importar ${names.length} clientes únicos?`)) {
