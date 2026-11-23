@@ -169,6 +169,9 @@ class WashFlowApp {
                         this.washers[i].interval = setInterval(() => {
                             if(!this.washers[i].job.isPaused && this.washers[i].timeRemaining > 0) {
                                 this.washers[i].timeRemaining--;
+                                if (this.washers[i].timeRemaining === 0) {
+                                    this.playFinishSound();
+                                }
                                 this.renderMachines();
                                 this.saveState();
                             }
@@ -187,6 +190,9 @@ class WashFlowApp {
                         this.dryers[i].interval = setInterval(() => {
                             if(!this.dryers[i].job.isPaused && this.dryers[i].timeRemaining > 0) {
                                 this.dryers[i].timeRemaining--;
+                                if (this.dryers[i].timeRemaining === 0) {
+                                    this.playFinishSound();
+                                }
                                 this.renderMachines();
                                 this.saveState();
                             }
@@ -677,6 +683,9 @@ class WashFlowApp {
         targetDict[machineId].interval = setInterval(() => {
             if (!targetDict[machineId].job.isPaused && targetDict[machineId].timeRemaining > 0) {
                 targetDict[machineId].timeRemaining--;
+                if (targetDict[machineId].timeRemaining === 0) {
+                    this.playFinishSound();
+                }
                 this.renderMachines();
                 this.saveState();
             }
@@ -710,6 +719,9 @@ class WashFlowApp {
         dryer.interval = setInterval(() => {
             if (!dryer.job.isPaused && dryer.timeRemaining > 0) {
                 dryer.timeRemaining--;
+                if (dryer.timeRemaining === 0) {
+                    this.playFinishSound();
+                }
                 this.renderMachines();
                 this.saveState();
             }
@@ -743,6 +755,9 @@ class WashFlowApp {
         targetMach.interval = setInterval(() => {
             if (!targetMach.job.isPaused && targetMach.timeRemaining > 0) {
                 targetMach.timeRemaining--;
+                if (targetMach.timeRemaining === 0) {
+                    this.playFinishSound();
+                }
                 this.renderMachines();
                 this.saveState();
             }
@@ -786,7 +801,6 @@ class WashFlowApp {
 
     // Direct wash completion to folding
     finishWasherDirectly(washerId) {
-        this.playFinishSound();
         const washer = this.washers[washerId];
         if (!washer || !washer.job) return;
 
@@ -1166,7 +1180,6 @@ class WashFlowApp {
     }
 
     finishJob(dryerId) {
-        this.playFinishSound();
         clearInterval(this.dryers[dryerId].interval);
         const job = this.dryers[dryerId].job;
         
