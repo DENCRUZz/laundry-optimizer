@@ -50,6 +50,10 @@ class WashFlowApp {
         // Drag & Drop State
         this.dragData = null;
 
+        // Audio state (autoplay unlock)
+        this.audioUnlocked = false;
+        this.finishAudio = null;
+
         // State persistence markers
         this.lastProcessedTime = 0;
 
@@ -221,6 +225,10 @@ class WashFlowApp {
             foldingList.addEventListener('dragleave', (e) => this.handleDragLeave(e));
             foldingList.addEventListener('drop', (e) => this.handleDrop(e, 'folding'));
         }
+
+        // Unlock audio on first user interaction (browsers block autoplay)
+        document.addEventListener('click', () => this.unlockAudio(), { once: true });
+        document.addEventListener('keydown', () => this.unlockAudio(), { once: true });
 
         // Close modals on Escape key
         window.addEventListener('keydown', (e) => {
@@ -788,14 +796,33 @@ class WashFlowApp {
         this.saveState();
     }
 
+    // Unlock audio context on first user interaction (required by browsers)
+    unlockAudio() {
+        if (this.audioUnlocked) return;
+        try {
+            this.finishAudio = new Audio('orchestra-hit-or-combo-sound-full-combo.mp3');
+            this.finishAudio.volume = 0.8;
+            // Play a silent/empty buffer to unlock the audio context
+            this.finishAudio.play().catch(() => { /* ignored on unlock attempt */ });
+            this.audioUnlocked = true;
+            console.log('🔊 Audio desbloqueado');
+        } catch (e) {
+            console.warn('⚠️ No se pudo desbloquear el audio:', e);
+        }
+    }
+
     // Play finish sound when a wash or dry cycle completes
     playFinishSound() {
         try {
-            const audio = new Audio('orchestra-hit-or-combo-sound-full-combo.mp3');
-            audio.volume = 0.8;
-            audio.play().catch(e => console.warn('⚠️ No se pudo reproducir el sonido de finalización:', e));
+            if (!this.audioUnlocked || !this.finishAudio) {
+                this.unlockAudio();
+            }
+            if (this.finishAudio) {
+                this.finishAudio.currentTime = 0;
+                this.finishAudio.play().catch(e => console.warn('⚠️ No se pudo reproducir el sonido de finalización:', e));
+            }
         } catch (e) {
-            console.warn('⚠️ Error creando Audio:', e);
+            console.warn('⚠️ Error reproduciendo sonido:', e);
         }
     }
 
