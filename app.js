@@ -672,8 +672,20 @@ class WashFlowApp {
         this.saveState();
     }
 
+    // Play finish sound when a wash or dry cycle completes
+    playFinishSound() {
+        try {
+            const audio = new Audio('orchestra-hit-or-combo-sound-full-combo.mp3');
+            audio.volume = 0.8;
+            audio.play().catch(e => console.warn('⚠️ No se pudo reproducir el sonido de finalización:', e));
+        } catch (e) {
+            console.warn('⚠️ Error creando Audio:', e);
+        }
+    }
+
     // Direct wash completion to folding
     finishWasherDirectly(washerId) {
+        this.playFinishSound();
         const washer = this.washers[washerId];
         if (!washer || !washer.job) return;
 
@@ -1053,6 +1065,7 @@ class WashFlowApp {
     }
 
     finishJob(dryerId) {
+        this.playFinishSound();
         clearInterval(this.dryers[dryerId].interval);
         const job = this.dryers[dryerId].job;
         
